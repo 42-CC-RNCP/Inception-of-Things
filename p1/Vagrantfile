@@ -1,0 +1,11 @@
+Vagrant.configure("2") do |config|
+    config.vm.box       = "debian/bullseye64"
+    config.vm.hostname  = "lyeh"
+
+    config.vm.provider "virtualbox" do |vb|
+        vb.name     = "S"
+        vb.memory   = 512
+        vb.cpus     = 1
+    end
+end
+
