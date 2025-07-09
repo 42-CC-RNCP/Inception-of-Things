@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VAGRANT_VERSION="2.4.1"
+VAGRANT_VERSION="2.4.7"
 ARCH="amd64"
 DEB_FILE="vagrant_${VAGRANT_VERSION}-1_${ARCH}.deb"
 DOWNLOAD_URL="https://releases.hashicorp.com/vagrant/${VAGRANT_VERSION}/${DEB_FILE}"
