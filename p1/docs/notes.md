@@ -91,3 +91,19 @@ Then, on the worker node, you can run the following command to join the cluster:
 ```bash
 curl -sfL https://get.k3s.io | K3S_URL=https://<server-ip>:6443 K3S_TOKEN=<token> sh -
 ```
+
+### kubectl command
+
+Get the list of nodes in the cluster:
+
+```bash
+kubectl get nodes -o wide
+
+# -o wide: This option provides additional information about the nodes, such as their internal IP addresses and roles.
+```
+
+Get the list of pods in the cluster:
+
+```bash
+kubectl get pods --all-namespaces
+```
