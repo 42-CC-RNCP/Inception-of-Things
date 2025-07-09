@@ -43,3 +43,6 @@ Install the required packages and tools
 ./scripts/setup_host.sh
 ```
 
+## Resource Links
+
+- [Create a Multi-Node Cluster in K3s](https://medium.com/@dharsannanantharaman/create-a-high-availabilty-lightweight-kubernetes-k3s-cluster-using-vagrant-822a1e025855)
