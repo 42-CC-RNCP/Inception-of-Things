@@ -9,7 +9,7 @@ Depend on the subject, we need to setup everything in the VM which need to be th
 wget https://cdimage.debian.org/cdimage/archive/12.9.0/amd64/iso-cd/debian-12.9.0-amd64-netinst.iso
 
 # For ARM64 architecture (For my macos)
-wget https://cdimage.debian.org/cdimage/archive/12.9.0/arm64/iso-cd/debian-12.9.0-arm64-netinst.iso
+Impossible to install vagrant
 ```
 
 To enable nested virtualization in VirtualBox, allowing a guest VM to run its own VMs,
