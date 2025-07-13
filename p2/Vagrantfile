@@ -1,0 +1,23 @@
+LOGIN = "vhappenh"
+
+Vagrant.configure("2") do |config|
+    config.vm.box       = "debian/bookworm64"
+
+    config.vm.define "k3s-server" do |srv|
+        srv.vm.hostname = "#{LOGIN}S"
+        srv.vm.network "private_network", ip: "192.168.56.110"
+
+        srv.vm.provider "virtualbox" do |vb|
+            vb.memory   = 2048
+            vb.cpus     = 2
+        end
+
+        srv.vm.provision "shell", inline: <<-SHELL
+            apt-get update
+            apt-get install -y curl net-tools
+            ln -s /sbin/ifconfig /usr/bin/ifconfig
+          SHELL
+
+        srv.vm.provision "shell", path: "tools/k3s_master.sh", args: ["192.168.56.110"]
+    end
+end
