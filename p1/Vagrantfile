@@ -9,8 +9,7 @@ Vagrant.configure("2") do |config|
 
     config.vm.provision "shell", inline: <<-SHELL
         apt-get update
-        apt-get install -y curl net-tools
-        ln -s /sbin/ifconfig /usr/bin/ifconfig
+        apt-get install -y curl
     SHELL
 
     config.vm.define "k3s-server" do |srv|
