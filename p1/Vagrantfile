@@ -1,29 +1,36 @@
-LOGIN = "lyeh"
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-    config.vm.box       = "debian/bookworm64"
-    config.vm.provider "virtualbox" do |vb|
-        vb.memory   = 2048
-        vb.cpus     = 2
+  config.vm.box = "debian/bookworm64"
+
+  config.vm.box_check_update = false
+
+  config.vm.synced_folder "./data", "/vagrant_data"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    apt-get update
+    apt-get install -y curl
+  SHELL
+
+  config.vm.define "vhappenhS" do |vhappenhS|
+    vhappenhS.vm.hostname = "vhappenS"
+    vhappenhS.vm.network "private_network", ip: '192.168.56.110'
+    vhappenhS.vm.provision "shell", path: "./tools/install-server.sh", args: ["192.168.56.110"]
+
+    vhappenhS.vm.provider "virtualbox" do |vb|
+      vb.memory = "2048"  
+      vb.cpus = 2        
     end
+  end
+  config.vm.define "vhappenhSW" do |vhappenhSW|
+    vhappenhSW.vm.hostname = "vhappenSW"
+    vhappenhSW.vm.network "private_network", ip: '192.168.56.111'
+    vhappenhSW.vm.provision "shell", path: "./tools/install-agent.sh" , args: ["192.168.56.110"]
 
-    config.vm.provision "shell", inline: <<-SHELL
-        apt-get update
-        apt-get install -y curl
-    SHELL
-
-    config.vm.define "k3s-server" do |srv|
-        srv.vm.hostname = "#{LOGIN}S"
-        srv.vm.network "private_network", ip: "192.168.56.110"
-
-        srv.vm.provision "shell", path: "tools/k3s_master.sh", args: ["192.168.56.110"]
+    vhappenhSW.vm.provider "virtualbox" do |vb|
+      vb.memory = "512"  
+      vb.cpus = 1    
     end
-
-    config.vm.define "k3s-server-worker" do |sw|
-        sw.vm.hostname = "#{LOGIN}SW"
-        sw.vm.network "private_network", ip: "192.168.56.111"
-
-        sw.vm.provision "shell", path: "tools/k3s_worker.sh", args: ["192.168.56.110"]
-    end
-
+  end
 end
