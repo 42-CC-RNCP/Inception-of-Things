@@ -2,11 +2,11 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: app1-route
-  namespace: kube-system
+  namespace: application
 spec:
   parentRefs:
   - name: web
-    namespace: kube-system
+    namespace: application
     sectionName: http
   hostnames: ["app1.com"]
   rules:

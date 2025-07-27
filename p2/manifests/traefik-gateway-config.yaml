@@ -5,6 +5,7 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    installCRDs: false
     providers:
       kubernetesGateway:
         enabled: true
