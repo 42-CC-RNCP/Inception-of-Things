@@ -21,4 +21,4 @@ destroy:
 	@echo "Destroying Vagrant VM..."
 	vagrant destroy -f
 
-.PHONY: setup destroy
+.PHONY: all setup destroy

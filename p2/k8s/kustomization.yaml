@@ -1,0 +1,20 @@
+# k8s/kustomization.yaml
+resources:
+  - app1.yaml
+  - app1-service.yaml
+  - app2.yaml
+  - app2-service.yaml
+  - app3.yaml
+  - app3-service.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: app1-html
+    files:
+      - assets/app1.html
+  - name: app2-html
+    files:
+      - assets/app2.html
+  - name: app3-html
+    files:
+      - assets/app3.html
