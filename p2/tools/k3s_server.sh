@@ -37,11 +37,12 @@ helm upgrade --install traefik traefik/traefik \
   --set providers.kubernetesGateway.enabled=true \
   --set providers.kubernetesIngress.enabled=true \
   --set ingressClass.enabled=true \
-  --set gateway.enabled=true \
   --set ports.web.port=80 \
   --set ports.web.targetPort=80 \
   --set ports.websecure.port=443 \
-  --set ports.websecure.targetPort=443
+  --set ports.websecure.targetPort=443 \
+  --set gateway.listeners.web.port=80 \
+  --set gateway.enabled=false
 
 echo "▶️ 6. Wait for Traefik to be Ready"
 kubectl rollout status deploy/traefik -n ${TRAEFIK_NS} --timeout=180s
