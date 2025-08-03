@@ -1,10 +1,11 @@
+# manifest/geteway/gateway.yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: web
-  namespace: kube-system
+  namespace: application
 spec:
-  gatewayClassName: traefik-gateway
+  gatewayClassName: traefik
   listeners:
   - name: http
     protocol: HTTP
