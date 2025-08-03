@@ -48,5 +48,4 @@ echo "▶️ 6. Wait for Traefik to be Ready"
 kubectl rollout status deploy/traefik -n ${TRAEFIK_NS} --timeout=180s
 
 echo "▶️ 7. Apply GatewayClass/Gateway and routes"
-# kubectl apply -f /vagrant/manifests/traefik-gateway-config.yaml
 kubectl apply -k /vagrant/manifests     # your app + HTTPRoutes
