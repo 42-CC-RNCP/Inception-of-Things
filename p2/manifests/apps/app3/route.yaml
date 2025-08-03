@@ -10,5 +10,5 @@ spec:
     sectionName: http
   rules:
   - backendRefs:
-    - name: app3-three
+    - name: app-three
       port: 80
