@@ -1,55 +1,51 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
+IP=${1:?provide server IP}
 
-IP=$1
 GWA_VER="v1.3.0"
+TRAEFIK_NS="application"
 
-echo "Setting up Traefik Gateway configuration"
-sudo mkdir -p /var/lib/rancher/k3s/server/manifests
-sudo cp /vagrant/manifests/traefik-gateway-config.yaml /var/lib/rancher/k3s/server/manifests/traefik-gateway-config.yaml 
-
-echo "Installing k3s on $(hostname) node with IP: ${IP}"
-
-# Install k3s
+echo "▶️ 1. Install k3s without built-in Traefik"
 curl -sfL https://get.k3s.io | \
+    INSTALL_K3S_CHANNEL=stable \
     INSTALL_K3S_EXEC="server \
-    --tls-san ${IP} \
-    --write-kubeconfig-mode 644" sh -
+   --disable=traefik --tls-san ${IP} --write-kubeconfig-mode 644" sh -
 
-echo "k3s installed successfully on $(hostname)"
+echo "▶️ 2. Wait for k3s API"
+until kubectl get --raw=/healthz &>/dev/null; do sleep 2; done
+echo "k3s version: $(k3s --version | awk '{print $3}')"
 
-# Wait for k3s to be ready
-echo "Waiting for k3s to be ready..."
-while ! kubectl get nodes; do
-    sleep 5
-done
-
-echo "k3s is ready on $(hostname)"
-
-# Wait for Traefik deployment to show up
-echo "Waiting for Traefik deployment to appear..."
-while ! kubectl get deployment traefik -n kube-system &>/dev/null; do
-    sleep 2
-done
-
-echo "Waiting for Traefik to be available..."
-kubectl wait --for=condition=Available deployment/traefik -n kube-system --timeout=180s
-
-echo "Install Gateway API version ${GWA_VER} on k3s server"
+echo "▶️ 3. Install Gateway-API CRDs (${GWA_VER})"
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GWA_VER}/standard-install.yaml
 
-echo "Gateway API installed successfully on k3s server"
+echo "▶️ 4. Install Traefik Gateway-API RBAC"
+kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-gateway-rbac.yml
 
 
-echo "Applying Traefik Gateway configuration"
-kubectl create namespace application --dry-run=client -o yaml | kubectl apply -f -
 
+echo "▶️ 5. Deploy Traefik v3 with Gateway provider"
 
-echo "Applying customized configurations"
+echo "  Installing Helm 3 CLI"
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-kubectl apply -k /vagrant/manifests
+helm uninstall traefik -n kube-system || true
+helm version --short
+helm repo add traefik https://traefik.github.io/charts && helm repo update
+helm upgrade --install traefik traefik/traefik \
+  --namespace "${TRAEFIK_NS}" --create-namespace --wait \
+  --set providers.kubernetesGateway.enabled=true \
+  --set providers.kubernetesIngress.enabled=true \
+  --set ingressClass.enabled=true \
+  --set gateway.enabled=true \
+  --set ports.web.port=80 \
+  --set ports.web.targetPort=80 \
+  --set ports.websecure.port=443 \
+  --set ports.websecure.targetPort=443
 
-echo "Custom configurations applied successfully"
+echo "▶️ 6. Wait for Traefik to be Ready"
+kubectl rollout status deploy/traefik -n ${TRAEFIK_NS} --timeout=180s
 
-
-kubectl get nodes -o wide
+echo "▶️ 7. Apply GatewayClass/Gateway and routes"
+# kubectl apply -f /vagrant/manifests/traefik-gateway-config.yaml
+kubectl apply -k /vagrant/manifests     # your app + HTTPRoutes
