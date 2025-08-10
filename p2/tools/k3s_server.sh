@@ -3,7 +3,6 @@ set -euo pipefail
 IP=${1:?provide server IP}
 
 GWA_VER="v1.3.0"
-TRAEFIK_NS="application"
 
 echo "▶️ 1. Install k3s without built-in Traefik"
 curl -sfL https://get.k3s.io | \
@@ -33,7 +32,7 @@ helm uninstall traefik -n kube-system || true
 helm version --short
 helm repo add traefik https://traefik.github.io/charts && helm repo update
 helm upgrade --install traefik traefik/traefik \
-  --namespace "${TRAEFIK_NS}" --create-namespace --wait \
+  --create-namespace --wait \
   --set providers.kubernetesGateway.enabled=true \
   --set providers.kubernetesIngress.enabled=true \
   --set ingressClass.enabled=true \
@@ -45,7 +44,7 @@ helm upgrade --install traefik traefik/traefik \
   --set gateway.enabled=false
 
 echo "▶️ 6. Wait for Traefik to be Ready"
-kubectl rollout status deploy/traefik -n ${TRAEFIK_NS} --timeout=180s
+kubectl rollout status deploy/traefik --timeout=180s
 
 echo "▶️ 7. Apply GatewayClass/Gateway and routes"
-kubectl apply -k /vagrant/manifests     # your app + HTTPRoutes
+kubectl apply -k /vagrant/manifests/overlays/gateway
