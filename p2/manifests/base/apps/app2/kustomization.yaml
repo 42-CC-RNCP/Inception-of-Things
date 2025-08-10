@@ -1,0 +1,9 @@
+resources:
+  - app2-deployment.yaml
+  - app2-service.yaml
+
+configMapGenerator:
+  - name: app2-html
+    files:
+      - app2.html
+

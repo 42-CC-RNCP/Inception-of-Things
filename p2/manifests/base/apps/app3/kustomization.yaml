@@ -1,0 +1,9 @@
+resources:
+  - app3-deployment.yaml
+  - app3-service.yaml
+
+configMapGenerator:
+  - name: app3-html
+    files:
+      - app3.html
+

@@ -1,0 +1,5 @@
+resources:
+  - ../../base
+  - app1-ingress.yaml
+  - app2-ingress.yaml
+  - app3-ingress.yaml
