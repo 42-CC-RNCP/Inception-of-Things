@@ -1,11 +1,10 @@
-VAGRANT_FILE ?= Vagrantfile.ingress
-
+MODE ?= ingress
 HOSTS_LINE = 192.168.56.110 app1.com app2.com app3.com
 
-VAGRANT_CMD = VAGRANT_VAGRANTFILE=$(VAGRANT_FILE) vagrant
+VAGRANT_CMD = MODE=$(MODE) vagrant
 
 all:
-	@echo "Starting Vagrant VM unsing $(VAGRANT_FILE)..."
+	@echo "Starting Vagrant VM with mode: $(MODE)"
 	$(VAGRANT_CMD) up
 
 setup:
@@ -15,7 +14,7 @@ setup:
 	else \
 		echo "Hosts entries already present."; \
 	fi
-	@echo "Starting Vagrant VM using $(VAGRANT_FILE)..."
+	@echo "Starting Vagrant VM with mode: $(MODE)"
 	$(VAGRANT_CMD) up
 
 into:

@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 IP=${1:?provide server IP}
+MODE_IN=${2:-ingress}
+
+shopt -s nocasematch
+case "${MODE_IN}" in
+  gwa|gw|gateway) MODE="gateway" ;;
+  ing|ingress)    MODE="ingress" ;;
+  *)              MODE="ingress" ;;
+esac
+shopt -u nocasematch
 
 GWA_VER="v1.3.0"
 
@@ -46,5 +55,5 @@ helm upgrade --install traefik traefik/traefik \
 echo "▶️ 6. Wait for Traefik to be Ready"
 kubectl rollout status deploy/traefik --timeout=180s
 
-echo "▶️ 7. Apply GatewayClass/Gateway and routes"
-kubectl apply -k /vagrant/manifests/overlays/gateway
+echo "▶️ 7. Apply manifests overlays (${MODE})"
+kubectl apply -k /vagrant/manifests/overlays/${MODE}
