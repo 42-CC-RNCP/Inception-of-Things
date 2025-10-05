@@ -199,20 +199,6 @@ create_k3d_cluster() {
   ok "k3d cluster created."
 }
 
-bootstrap_argocd() {
-  log "Creating namespaces (argocd, dev)..."
-  kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
-  kubectl create ns dev     --dry-run=client -o yaml | kubectl apply -f -
-  ok "Namespaces created."
-
-  log "Installing Argo CD (inside cluster)..."
-  kubectl apply -n argocd -f "${ARGOCD_MANIFEST_URL}"
-  log "Waiting for argocd-server Ready (up to 5 minutes)..."
-  kubectl rollout status deploy/argocd-server -n argocd --timeout=300s || true
-
-  ok "Argo CD installed."
-}
-
 part3_stack() {
   install_docker
   install_kubectl
@@ -220,7 +206,6 @@ part3_stack() {
   if [[ "${DO_PROVISION}" -eq 1 ]]; then
     ensure_docker_ready
     create_k3d_cluster
-    bootstrap_argocd
   else
     warn "--no-provision: Only installing tools, skipping cluster creation/Argo CD installation."
   fi
