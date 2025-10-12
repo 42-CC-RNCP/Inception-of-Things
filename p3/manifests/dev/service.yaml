@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: playground-svc
+  namespace: dev
+spec:
+  selector:
+    app: playground
+  ports:
+    - port: 8888
+      targetPort: 8888
+      protocol: TCP
+  type: ClusterIP
