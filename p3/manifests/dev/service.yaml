@@ -5,7 +5,7 @@ metadata:
   namespace: dev
 spec:
   selector:
-    app: playground
+    app: wil-playground
   ports:
     - port: 8888
       targetPort: 8888

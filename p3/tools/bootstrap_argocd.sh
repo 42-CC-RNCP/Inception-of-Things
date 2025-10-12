@@ -14,11 +14,9 @@ die()  { echo -e "❌ $*" >&2; exit 1; }
 # =========================
 CLUSTER_NAME="${CLUSTER_NAME:-mycluster}"
 ARGOCD_INSTALL_URL=${ARGOCD_INSTALL_URL:-"https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"}
-
-# host → k3d serverlb 端口對應
-# 8080 對應叢集 LB 的 8443（我們會把 argocd-server Service 開 8443 指到 Pod 的 443）
 ARGOCD_HOST_PORT="${ARGOCD_HOST_PORT:-8080}"   # maps to cluster LB :8443
 APP_HOST_PORT="${APP_HOST_PORT:-8888}"         # maps to cluster LB :8888
+ARGOCD_MANIFESTS_DIR="${ARGOCD_MANIFESTS_DIR:-manifests/argocd}"
 
 # =========================
 # Pre-flight
@@ -113,16 +111,16 @@ bootstrap_argocd() {
   kubectl -n argocd patch svc argocd-server -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null
   kubectl -n argocd patch svc argocd-server --type merge -p '{
     "spec": {
+      "type": "LoadBalancer",
       "ports": [
-        {"name":"http","port":80,"targetPort":8080},
-        {"name":"https","port":443,"targetPort":443},
-        {"name":"https-alt","port":8443,"targetPort":443}
+        {"name":"https-alt","port":8443,"targetPort":8080}
       ]
     }
   }' >/dev/null
+  
 
   # wait svclb_ready or it will get connection refused
-  wait_svclb_ready argocd argocd-server 300
+  wait_svclb_ready kube-system argocd-server 300
 
   log "Retrieving Argo CD initial admin password..."
   ARGOCD_ADMIN_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
@@ -130,7 +128,7 @@ bootstrap_argocd() {
 
   # apply Application
   log "Applying Argo CD Application (dev/playground)..."
-  kubectl apply -f p3/manifests/argocd/application-dev.yaml
+  kubectl apply -f "${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
   ok "Application applied."
 
   if kubectl -n dev get deploy playground >/dev/null 2>&1; then
@@ -140,18 +138,8 @@ bootstrap_argocd() {
     warn "Deployment 'playground' not found yet; will continue and rely on Argo CD sync."
   fi
 
-  log "Waiting for Service 'playground-svc' to be created by Argo CD..."
-  local end=$((SECONDS+300))
-  until kubectl -n dev get svc playground-svc >/dev/null 2>&1; do
-    if (( SECONDS > end )); then die "Service 'playground-svc' not created within 300s"; fi
-    sleep 3
-  done
-
-  # Make playground-svc type=LoadBalancer should be defined in manifest
-  kubectl -n dev patch svc playground-svc -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null || true
-
   # wait svclb_ready or it will get connection refused
-  wait_svclb_ready dev playground-svc 300
+  wait_svclb_ready kube-system playground-svc 300
 
   ok "Playground app: http://localhost:${APP_HOST_PORT}"
 }
