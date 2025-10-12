@@ -6,7 +6,6 @@ set -euo pipefail
 # =========================
 VAGRANT_VERSION="${VAGRANT_VERSION:-2.4.7}"
 CLUSTER_NAME="${CLUSTER_NAME:-k3d-cluster}"
-ARGOCD_MANIFEST_URL="https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 
 # =========================
 # Helpers
