@@ -40,6 +40,10 @@ bootstrap_argocd() {
   kubectl apply -f p3/manifests/argocd/application-dev.yaml
   ok "Argo CD Application(dev/playground) applied."
 
+  log "port-forwarding playground service to http://localhost:8888 ..."
+  kubectl port-forward -n dev svc/playground-svc 8888:8888 >/dev/null 2>&1 &
+  sleep 3
+  ok "Playground app: http://localhost:8888"
 }
 
 # =========================
