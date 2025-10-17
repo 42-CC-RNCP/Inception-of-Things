@@ -1,3 +1,5 @@
+# confs/gitlab.constrained.yaml
+# GitLab Helm Chart configuration for constrained environments
 # Fully disable cert-manager and issuer (no TLS for local PoC)
 certmanager-issuer:
   enabled: false

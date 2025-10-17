@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# scripts/bootstrap_argocd.sh
 set -euo pipefail
 
 # =========================

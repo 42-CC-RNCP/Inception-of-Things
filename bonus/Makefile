@@ -45,7 +45,7 @@ logs:  ## Tail logs for webservice and sidekiq
 pf:  ## Port-forward API(8081) and SSH(2222)
 	@echo "API  -> http://localhost:8081"
 	@echo "SSH  -> ssh://[email protected]:2222"
-	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-webservice-default 8081:8080 &
+	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-webservice-default 8081:8181 &
 	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-gitlab-shell 2222:22 & \
 	wait || true
 

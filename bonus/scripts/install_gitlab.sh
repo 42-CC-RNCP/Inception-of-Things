@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# scripts/install_gitlab.sh
 # Always install GitLab with low-memory values unless an explicit values file is passed
 set -euo pipefail
 
@@ -115,5 +116,5 @@ kubectl -n "$NS" get secret ${REL}-gitlab-initial-root-password \
   -o jsonpath='{.data.password}' | base64 -d; echo
 
 ok "No-UI mode. Use port-forward when needed:"
-echo "  API: kubectl -n $NS port-forward svc/${REL}-webservice-default 8081:8080"
+echo "  API: kubectl -n $NS port-forward svc/${REL}-webservice-default 8081:8181"
 echo "  SSH: kubectl -n $NS port-forward svc/${REL}-gitlab-shell 2222:22"
