@@ -1,14 +1,15 @@
+# bonus/manifests/argocd/application-dev.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: p3-dev
+  name: bonus-dev
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/42-CC-RNCP/Inception-of-Things.git
-    targetRevision: lea/p3
-    path: p3/manifests/dev
+    repoURL: http://localhost:8081/root/my-repo.git
+    targetRevision: main
+    path: bonus/manifests/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: dev
