@@ -18,6 +18,8 @@ NS       ?= gitlab
 REL      ?= gitlab
 HELM     ?= helm
 KUBECTL  ?= kubectl
+REPO_PATH ?= root/my-repo
+BASE_HOST ?= localhost:8081
 
 # Always use the low-memory values by default
 VALUES   ?= confs/gitlab.constrained.yaml
@@ -104,6 +106,50 @@ delete-pvcs:  ## Delete all PVCs in the namespace (DATA LOSS)
 delete-ns:  ## Delete the entire namespace (DATA LOSS)
 	@echo "==> Deleting namespace $(NS) (DATA LOSS)"
 	-@$(KUBECTL) delete ns $(NS) --ignore-not-found
+
+# ---- GitLab Personal Access Token ---------------------------------------------
+
+.PHONY: gitlab-pat
+gitlab-pat:
+	@set -euo pipefail; \
+	echo "👉 Creating PAT (scopes: read_repository, write_repository, api)"; \
+	TOKEN="$$( \
+	  $(KUBECTL) -n $(NS) exec deploy/$(REL)-toolbox -c toolbox -- \
+	  gitlab-rails runner \
+	  "u = User.find_by_username('root'); \
+	   t = u.personal_access_tokens.create(scopes: %w[read_repository write_repository api], \
+	                                       name: 'push-token', expires_at: 365.days.from_now); \
+	   puts t.token" \
+	)"; \
+	echo "REPO_PAT=$$TOKEN" > .env.gitlab; \
+	echo "✅ Wrote .env.gitlab"; \
+	echo "Run: export REPO_PAT=$$TOKEN"; \
+	echo "$$TOKEN" >/dev/null
+
+.PHONY: show-urls
+show-urls:
+	@echo "Web/UI:     http://$(BASE_HOST)"
+	@echo "HTTP Git:   http://$(BASE_HOST)/$(REPO_PATH).git"
+	@echo "SSH  Git:   ssh://[email protected]:2222/$(REPO_PATH).git"
+
+.PHONY: test-http-git
+test-http-git:
+	@test -n "$$REPO_PAT" || (echo "❌ Please: export REPO_PAT=..."; exit 1)
+	@echo "👉 Testing HTTP Git access with REPO_PAT: $$REPO_PAT"
+	@curl -sS -H "PRIVATE-TOKEN: $$REPO_PAT" http://localhost:8081/api/v4/user && \
+	echo -e "\n✅ HTTP Git access works" || (echo -e "\n❌ HTTP Git access failed"; exit 1)
+
+.PHONY: hint-remote
+hint-remote-http:
+	@echo "# HTTP remote (use this if you set REPO_PAT in your git credentials)"
+	@echo "git config --global credential.helper store"
+	@echo 'printf "protocol=http\nhost=$(BASE_HOST)\nusername=root\npassword=$$REPO_PAT\n\n" | git credential approve'
+	@echo "git remote set-url gitlab http://$(BASE_HOST)/$(REPO_PATH).git"
+
+hint-remote-ssh:
+	@echo "# SSH remote (ensure your SSH key is added to GitLab)"
+	@echo "git remote set-url gitlab ssh://[email protected]:2222/$(REPO_PATH).git"
+
 
 # ---- Last resort --------------------------------------------------------------
 .PHONY: nuke-finalizers
