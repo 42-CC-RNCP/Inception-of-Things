@@ -1,4 +1,4 @@
-# bonus/manifests/argocd/application-dev.yaml
+# bonus/manifests/argocd/application-dev.tmpl.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -7,9 +7,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: http://localhost:8081/root/my-repo.git
-    targetRevision: main
-    path: bonus/manifests/dev
+    repoURL: ${REPO_URL}
+    targetRevision: ${REVISION:-main}
+    path: ${APP_PATH:-bonus/manifests/dev}
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

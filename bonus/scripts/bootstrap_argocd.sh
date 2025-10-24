@@ -19,6 +19,11 @@ ARGOCD_HOST_PORT="${ARGOCD_HOST_PORT:-8080}"   # maps to cluster LB :8443
 APP_HOST_PORT="${APP_HOST_PORT:-8888}"         # maps to cluster LB :8888
 ARGOCD_MANIFESTS_DIR="${ARGOCD_MANIFESTS_DIR:-manifests/argocd}"
 
+ARGOCD_APP_TEMPLATE="${ARGOCD_APP_TEMPLATE:-manifests/argocd/application-dev.tmpl.yaml}"
+REPO_URL="${REPO_URL:-http://gitlab-webservice-default.gitlab.svc:8181/root/my-repo.git}"
+REVISION="${REVISION:-main}"
+APP_PATH="${APP_PATH:-manifests/dev}"
+
 # =========================
 # Pre-flight
 # =========================
@@ -128,8 +133,19 @@ bootstrap_argocd() {
   ok "Argo CD UI: https://localhost:${ARGOCD_HOST_PORT}   (user: admin, password: ${ARGOCD_ADMIN_PASSWORD})"
 
   # apply Application
-  log "Applying Argo CD Application (dev/playground)..."
-  kubectl apply -f "${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
+  if [[ -f "${ARGOCD_APP_TEMPLATE}" ]]; then
+    need envsubst
+    log "Rendering Application from template via envsubst"
+    log "  REPO_URL = ${REPO_URL}"
+    log "  REVISION = ${REVISION}"
+    log "  APP_PATH = ${APP_PATH}"
+    REPO_URL="${REPO_URL}" REVISION="${REVISION}" APP_PATH="${APP_PATH}" \
+      envsubst < "${ARGOCD_APP_TEMPLATE}" | kubectl apply -f -
+  else
+    warn "Template not found: ${ARGOCD_APP_TEMPLATE}"
+    log  "Falling back to ${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
+    kubectl apply -f "${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
+  fi
   ok "Application applied."
 
   if kubectl -n dev get deploy playground >/dev/null 2>&1; then
