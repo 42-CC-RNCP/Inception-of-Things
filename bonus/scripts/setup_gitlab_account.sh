@@ -72,6 +72,7 @@ if [[ -z "$USER_ID" ]]; then
   USER_ID="$(jq -r '.id' <<<"$CREATE_JSON")"
   [[ -n "$USER_ID" && "$USER_ID" != "null" ]] || die "Failed to create user. Response: $CREATE_JSON"
   ok "Created user '$ACCOUNT_USERNAME' (id=$USER_ID, email=$ACCOUNT_EMAIL)"
+  ok "Initial password: $PASSWORD"
 else
   ok "User exists '$ACCOUNT_USERNAME' (id=$USER_ID)"
 fi
@@ -111,5 +112,5 @@ Next steps:
   2) Test SSH (should print a welcome message, not a shell):
        ssh -i "$PRIVKEY_PATH" -p 2222 -o StrictHostKeyChecking=no git@localhost
   3) Use SSH remote in your repo, e.g.:
-       git remote set-url origin "ssh://git@localhost:2222/$ACCOUNT_USERNAME/your-repo.git"
+       git remote set-url origin "ssh://git@localhost:2222/$ACCOUNT_USERNAME/Inception-of-Things.git"
 EOF
