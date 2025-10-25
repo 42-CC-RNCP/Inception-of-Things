@@ -8,8 +8,8 @@ spec:
   project: default
   source:
     repoURL: ${REPO_URL}
-    targetRevision: ${REVISION:-main}
-    path: ${APP_PATH:-bonus/manifests/dev}
+    targetRevision: ${REVISION}
+    path: ${APP_PATH}
   destination:
     server: https://kubernetes.default.svc
     namespace: dev
