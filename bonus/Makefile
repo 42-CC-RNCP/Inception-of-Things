@@ -18,11 +18,28 @@ NS       ?= gitlab
 REL      ?= gitlab
 HELM     ?= helm
 KUBECTL  ?= kubectl
-REPO_PATH ?= root/my-repo
+REPO_PATH ?= $(USER)/Inception-of-Things
 BASE_HOST ?= localhost:8081
 
 # Always use the low-memory values by default
 VALUES   ?= confs/gitlab.constrained.yaml
+ENV_FILE := .gitlab.env
+
+-include $(ENV_FILE)
+ifneq ("$(wildcard $(ENV_FILE))","")
+# Export any VAR present in .gitlab.env whether lines are "KEY=V" or "export KEY=V"
+export $(shell sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' $(ENV_FILE))
+endif
+
+# ---- Full Setup ----------------------------------------------------------------
+
+.PHONY: up
+up: gitlab-up argocd-up pf
+	@echo "✅ GitLab and ArgoCD are up and running!"
+
+.PHONY: setup
+setup: gitlab-pat setup-account show-urls hint-remote-http hint-remote-ssh
+	@echo "✅ GitLab account and PAT setup done!"
 
 # ---- Helpers ------------------------------------------------------------------
 .PHONY: help
@@ -46,12 +63,16 @@ logs:  ## Tail logs for webservice and sidekiq
 .PHONY: pf
 pf:  ## Port-forward API(8081) and SSH(2222)
 	@echo "API  -> http://localhost:8081"
-	@echo "SSH  -> ssh://[email protected]:2222"
+	@echo "SSH  -> ssh://git@localhost:2222"
 	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-webservice-default 8081:8181 &
-	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-gitlab-shell 2222:22 & \
-	wait || true
+	-$(KUBECTL) -n $(NS) port-forward svc/$(REL)-gitlab-shell 2222:22 &
 
 # ---- Install / Upgrade --------------------------------------------------------
+
+.PHONY: argocd-up
+argocd-up:  ## Install/Upgrade ArgoCD in the cluster
+	@./scripts/bootstrap_argocd.sh
+
 .PHONY: gitlab-up
 gitlab-up:  ## Install/Upgrade GitLab using LOW-MEM values (confs/gitlab.constrained.yaml)
 	@./scripts/install_gitlab.sh $(VALUES)
@@ -78,13 +99,49 @@ restart:  ## Restart webservice + sidekiq and wait for rollout
 	-$(KUBECTL) -n $(NS) rollout status deploy/$(REL)-webservice-default --timeout=1200s || true
 	-$(KUBECTL) -n $(NS) rollout status deploy/$(REL)-sidekiq-all-in-1-v2 --timeout=1200s || true
 
+# ---- Setup GitLab ------------------------------------------------------
+.PHONY: setup-account
+setup-account:  ## Setup GitLab account and upload local SSH key to GitLab
+	@./scripts/setup_gitlab_account.sh
+
+.PHONY: gitlab-pat
+gitlab-pat:
+	@if [ -n "$${REPO_PAT:-}" ]; then \
+	  echo "✅ REPO_PAT already set in environment, skipping creation."; \
+	  exit 0; \
+	  return 0; \
+	fi
+	@set -euo pipefail; \
+	echo "👉 Creating PAT (scopes: read_repository, write_repository, api, admin_mode)"; \
+	TOKEN="$$( \
+	  $(KUBECTL) -n $(NS) exec deploy/$(REL)-toolbox -c toolbox -- \
+	  gitlab-rails runner \
+	  "u = User.find_by_username('root'); \
+	   t = u.personal_access_tokens.create(scopes: %w[read_repository write_repository api admin_mode], \
+	                                       name: 'push-token', expires_at: 365.days.from_now); \
+	   puts t.token" \
+	)"; \
+	echo "export REPO_PAT=$$TOKEN" >> .gitlab.env; \
+	echo "✅ Wrote .gitlab.env"; \
+	echo "👉 Smoke test: /api/v4/user"; \
+	curl -fsS -H "PRIVATE-TOKEN: $$TOKEN" http://$(BASE_HOST)/api/v4/user >/dev/null && echo "✅ Token works"
+
 # ---- Cleanup ------------------------------------------------------------------
+.PHONY: unport-forward
+unport-forward:  ## Kill any port-forwarding processes
+	-@pkill -f "kubectl.*port-forward" || true
+	@echo "✅ Killed port-forward processes."
+
 .PHONY: clean
-clean: uninstall wait-gone  ## Uninstall Helm release (keeps namespace + PVCs/data)
+clean: unport-forward uninstall wait-gone  ## Uninstall Helm release (keeps namespace + PVCs/data)
 	@echo "✅ Clean done (release removed, data kept)."
+	@rm -f .gitlab.env
+	@ssh-keygen -f "$(HOME)/.ssh/known_hosts" -R "[localhost]:2222"
+	@unset GITLAB_ROOT_PASSWORD || true
+	@unset REPO_PAT || true
 
 .PHONY: purge
-purge: uninstall wait-gone delete-pvcs delete-ns  ## Full wipe: release + PVCs + namespace (DATA LOSS)
+purge: clean delete-pvcs delete-ns  ## Full wipe: release + PVCs + namespace (DATA LOSS)
 	@echo "🧨 Purge done (everything removed)."
 
 .PHONY: uninstall
@@ -107,37 +164,26 @@ delete-ns:  ## Delete the entire namespace (DATA LOSS)
 	@echo "==> Deleting namespace $(NS) (DATA LOSS)"
 	-@$(KUBECTL) delete ns $(NS) --ignore-not-found
 
-# ---- GitLab Personal Access Token ---------------------------------------------
-
-.PHONY: gitlab-pat
-gitlab-pat:
-	@set -euo pipefail; \
-	echo "👉 Creating PAT (scopes: read_repository, write_repository, api)"; \
-	TOKEN="$$( \
-	  $(KUBECTL) -n $(NS) exec deploy/$(REL)-toolbox -c toolbox -- \
-	  gitlab-rails runner \
-	  "u = User.find_by_username('root'); \
-	   t = u.personal_access_tokens.create(scopes: %w[read_repository write_repository api], \
-	                                       name: 'push-token', expires_at: 365.days.from_now); \
-	   puts t.token" \
-	)"; \
-	echo "REPO_PAT=$$TOKEN" > .env.gitlab; \
-	echo "✅ Wrote .env.gitlab"; \
-	echo "Run: export REPO_PAT=$$TOKEN"; \
-	echo "$$TOKEN" >/dev/null
-
 .PHONY: show-urls
 show-urls:
 	@echo "Web/UI:     http://$(BASE_HOST)"
 	@echo "HTTP Git:   http://$(BASE_HOST)/$(REPO_PATH).git"
-	@echo "SSH  Git:   ssh://[email protected]:2222/$(REPO_PATH).git"
+	@echo "SSH  Git:   ssh://git@localhost:2222/$(REPO_PATH).git"
+
+.PHONY: env
+env:
+	@echo "NS=$(NS)"
+	@echo "REL=$(REL)"
+	@echo "BASE_HOST=$(BASE_HOST)"
+	@echo "REPO_PAT set? $$( [ -n "$${REPO_PAT:-}" ] && echo yes || echo no )"
+	@echo "GITLAB_ROOT_PASSWORD set? $$( [ -n "$${GITLAB_ROOT_PASSWORD:-}" ] && echo yes || echo no )"
 
 .PHONY: test-http-git
 test-http-git:
-	@test -n "$$REPO_PAT" || (echo "❌ Please: export REPO_PAT=..."; exit 1)
-	@echo "👉 Testing HTTP Git access with REPO_PAT: $$REPO_PAT"
-	@curl -sS -H "PRIVATE-TOKEN: $$REPO_PAT" http://localhost:8081/api/v4/user && \
-	echo -e "\n✅ HTTP Git access works" || (echo -e "\n❌ HTTP Git access failed"; exit 1)
+	@test -n "$$REPO_PAT" || (echo "❌ Please: source $(ENV_FILE) or export REPO_PAT=..."; exit 1)
+	@echo "👉 Testing HTTP API with REPO_PAT"
+	@curl -sS -H "PRIVATE-TOKEN: $$REPO_PAT" http://$(BASE_HOST)/api/v4/user && \
+	echo -e "\n✅ HTTP API works" || (echo -e "\n❌ HTTP API failed"; exit 1)
 
 .PHONY: hint-remote
 hint-remote-http:
@@ -148,13 +194,4 @@ hint-remote-http:
 
 hint-remote-ssh:
 	@echo "# SSH remote (ensure your SSH key is added to GitLab)"
-	@echo "git remote set-url gitlab ssh://[email protected]:2222/$(REPO_PATH).git"
-
-
-# ---- Last resort --------------------------------------------------------------
-.PHONY: nuke-finalizers
-nuke-finalizers:  ## Remove finalizers from stuck PVCs (LAST RESORT)
-	@echo "==> Removing finalizers from PVCs (last resort if stuck)"
-	-@for pvc in $$($(KUBECTL) -n $(NS) get pvc -o name 2>/dev/null); do \
-	  $(KUBECTL) -n $(NS) patch $$pvc -p '{"metadata":{"finalizers":[]}}' --type=merge || true; \
-	done
+	@echo "git remote set-url gitlab ssh://git@localhost:2222/$(REPO_PATH).git"
