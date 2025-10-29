@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# scripts/bootstrap_argocd.sh
+set -euo pipefail
+
+# =========================
+# Helpers
+# =========================
+log()  { echo -e "👉 \e[1m$*\e[0m"; }
+ok()   { echo -e "✅ $*"; }
+warn() { echo -e "⚠️  $*"; }
+die()  { echo -e "❌ $*" >&2; exit 1; }
+
+# =========================
+# Config
+# =========================
+CLUSTER_NAME="${CLUSTER_NAME:-mycluster}"
+ARGOCD_INSTALL_URL=${ARGOCD_INSTALL_URL:-"https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"}
+ARGOCD_HOST_PORT="${ARGOCD_HOST_PORT:-8080}"   # maps to cluster LB :8443
+APP_HOST_PORT="${APP_HOST_PORT:-8888}"         # maps to cluster LB :8888
+ARGOCD_MANIFESTS_DIR="${ARGOCD_MANIFESTS_DIR:-manifests/argocd}"
+
+SSH_PRIVATE_KEY_PATH="${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/gitlab_k3d}"
+GITLAB_SSH_HOST="${GITLAB_SSH_HOST:-gitlab-gitlab-shell.gitlab.svc}"
+GITLAB_SSH_PORT="${GITLAB_SSH_PORT:-22}"
+
+ARGOCD_APP_TEMPLATE="${ARGOCD_APP_TEMPLATE:-manifests/argocd/application-dev.tmpl.yaml}"
+REPO_URL="${REPO_URL:-ssh://git@gitlab-gitlab-shell.gitlab.svc/$USER/Inception-of-Things.git}"
+
+# TODO: Need to change the branch name to main later
+REVISION="${REVISION:-lea/bonus}"
+APP_PATH="${APP_PATH:-manifests/dev}"
+
+# =========================
+# Pre-flight
+# =========================
+need() { command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"; }
+
+ensure_docker_ready() {
+  need docker
+  if ! systemctl is-active --quiet docker; then
+    log "Starting Docker service..."
+    sudo systemctl enable --now docker
+  fi
+  if ! id -nG "$USER" | grep -qw docker; then
+    die "Current user is not in the 'docker' group. Run: sudo usermod -aG docker $USER && re-login (or run 'newgrp docker')."
+  fi
+  docker ps >/dev/null 2>&1 || die "Cannot connect to Docker daemon. Check /var/run/docker.sock permissions."
+}
+
+ensure_k3d_cluster_with_ports() {
+  need k3d
+  if k3d cluster list | awk 'NR>1 {print $1}' | grep -qx "${CLUSTER_NAME}"; then
+    warn "Detected existing k3d cluster: ${CLUSTER_NAME}"
+    local lb_name="k3d-${CLUSTER_NAME}-serverlb"
+    local lb_id; lb_id=$(docker ps -q -f "name=^/${lb_name}$" || true)
+    if [[ -z "${lb_id}" ]]; then
+      warn "Server LB container '${lb_name}' not found; possibly old k3d or custom setup."
+    else
+      local ports; ports=$(docker port "${lb_id}" || true)
+      echo "${ports}"
+      if ! grep -q "${ARGOCD_HOST_PORT}.*->" <<<"${ports}" || ! grep -q "${APP_HOST_PORT}.*->" <<<"${ports}"; then
+        warn "Existing cluster lacks required host port mappings:"
+        warn "  Need host ${ARGOCD_HOST_PORT} → LB:8443 and host ${APP_HOST_PORT} → LB:8888"
+        warn "Consider recreating the cluster:"
+        warn "  k3d cluster delete ${CLUSTER_NAME} && \\"
+        warn "  k3d cluster create ${CLUSTER_NAME} --wait \\"
+        warn "    --port \"${ARGOCD_HOST_PORT}:8443@loadbalancer\" \\"
+        warn "    --port \"${APP_HOST_PORT}:8888@loadbalancer\""
+      else
+        ok "Existing cluster has required host port mappings."
+      fi
+    fi
+    return
+  fi
+
+  log "Creating k3d cluster '${CLUSTER_NAME}' with host port mappings..."
+  k3d cluster create "${CLUSTER_NAME}" --wait \
+    --port "${ARGOCD_HOST_PORT}:8443@loadbalancer" \
+    --port "${APP_HOST_PORT}:8888@loadbalancer"
+  ok "k3d cluster created."
+}
+
+ensure_argocd_repo_secret_ssh() {
+  [[ -f "$SSH_PRIVATE_KEY_PATH" ]] || die "SSH private key not found: $SSH_PRIVATE_KEY_PATH"
+
+  if ! ssh-keygen -y -P "" -f "$SSH_PRIVATE_KEY_PATH" >/dev/null 2>&1; then
+    die "SSH private key appears to be passphrase-protected. Please use a key without passphrase for Argo CD."
+  fi
+
+  wait_svc_endpoints gitlab gitlab-gitlab-shell 300
+
+  local KH_RAW="/tmp/kh.raw" KH="/tmp/known_hosts"
+  local host="$GITLAB_SSH_HOST" port="$GITLAB_SSH_PORT"
+  local pod="keyscan-tmp"
+  kubectl -n argocd run "$pod" --image=alpine:3.20 --restart=Never --command -- \
+    sh -lc "apk add --no-cache openssh-client >/dev/null; ssh-keyscan -t rsa,ecdsa,ed25519 -p $port $host"
+  for i in $(seq 1 60); do
+    if kubectl -n argocd logs "$pod" >/dev/null 2>&1; then
+      kubectl -n argocd logs "$pod" > "$KH_RAW" || true
+      break
+    fi
+    sleep 1
+  done
+  kubectl -n argocd delete pod "$pod" --ignore-not-found >/dev/null
+  [[ -s "$KH_RAW" ]] || die "failed to fetch SSH host keys from in-cluster for $host:$port"
+
+  awk -v h="$host" -v p="$port" '
+  $1==h { print; printf("[%s]:%s %s %s\n", h, p, $2, $3); next }1
+  ' "$KH_RAW" > "$KH"
+
+  local CRED_URL="ssh://git@${host}"
+
+  log "Applying Argo CD repo-creds (SSH) for ${CRED_URL}"
+  kubectl -n argocd create secret generic gitlab-ssh-creds \
+    --from-literal=url="$CRED_URL" \
+    --from-file=sshPrivateKey="$SSH_PRIVATE_KEY_PATH" \
+    --from-file=sshKnownHosts="$KH" \
+    --dry-run=client -o yaml \
+  | kubectl label --local -f - argocd.argoproj.io/secret-type=repo-creds -o yaml --overwrite \
+  | kubectl apply -n argocd -f -
+
+  ok "Repo-creds Secret ready: gitlab-ssh-creds"
+
+  log "Applying Argo CD ssh-known-hosts ConfigMap for ${host}:${port}"
+  kubectl -n argocd create configmap argocd-ssh-known-hosts-cm \
+    --from-file=ssh_known_hosts="$KH" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  log "Restarting argocd-repo-server to pick up new known_hosts..."
+  kubectl -n argocd rollout restart deploy/argocd-repo-server
+  ok "SSH known_hosts ConfigMap ready: argocd-ssh-known-hosts-cm"
+}
+
+# =========================
+# Waiters (ServiceLB: svclb-*)
+# =========================
+wait_svclb_ready() {
+  local ns="$1"; local svc="$2"; local timeout="${3:-300}"
+  log "Waiting for ServiceLB helper pod 'svclb-${svc}-*' in namespace '${ns}' (timeout ${timeout}s)..."
+  local end=$((SECONDS+timeout))
+  while (( SECONDS <= end )); do
+    local lines
+    lines="$(kubectl -n "${ns}" get pods --no-headers 2>/dev/null | awk '/^svclb-'"${svc}"'-/ {print $1, $2, $3}')"
+    if [[ -n "${lines}" ]]; then
+      local notready
+      notready="$(awk '$2!="1/1" || $3!="Running" {print $0}' <<<"${lines}" || true)"
+      if [[ -z "${notready}" ]]; then
+        ok "ServiceLB helper for '${svc}' is Running."
+        return 0
+      fi
+    fi
+    sleep 3
+  done
+  die "ServiceLB helper for '${svc}' not ready within ${timeout}s"
+}
+
+wait_svc_endpoints() {
+  local ns="$1" svc="$2" timeout="${3:-300}"
+  log "Waiting for service '${ns}/${svc}' endpoints (timeout ${timeout}s)..."
+  local end=$((SECONDS+timeout))
+  while (( SECONDS <= end )); do
+    if kubectl -n "$ns" get svc "$svc" >/dev/null 2>&1; then
+      local eps
+      eps="$(kubectl -n "$ns" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
+      if [[ -n "$eps" ]]; then
+        ok "Service '${ns}/${svc}' has endpoints: ${eps}"
+        return 0
+      fi
+    fi
+    sleep 3
+  done
+  die "Service '${ns}/${svc}' not ready (no endpoints)."
+}
+
+gen_known_hosts_in_cluster() {
+  local host="$1" port="$2" out="$3"
+  local pod="keyscan-tmp"
+  kubectl -n argocd run "$pod" --image=alpine:3.20 --restart=Never --command -- \
+    sh -lc "apk add --no-cache openssh-client >/dev/null; ssh-keyscan -p $port $host"
+  for i in $(seq 1 60); do
+    if kubectl -n argocd logs "$pod" >/dev/null 2>&1; then
+      kubectl -n argocd logs "$pod" > "$out" || true
+      break
+    fi
+    sleep 1
+  done
+  kubectl -n argocd delete pod "$pod" --ignore-not-found >/dev/null
+  [[ -s "$out" ]] || die "failed to fetch known_hosts from in-cluster for $host:$port"
+}
+
+# =========================
+# Argo CD
+# =========================
+bootstrap_argocd() {
+  log "Creating namespaces (argocd, dev)..."
+  kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create ns dev     --dry-run=client -o yaml | kubectl apply -f -
+  ok "Namespaces ready."
+
+  log "Installing Argo CD (in-cluster)..."
+  kubectl apply -n argocd -f "${ARGOCD_INSTALL_URL}"
+
+  log "Waiting for argocd-server to be ready (up to 5 minutes)..."
+  kubectl rollout status deploy/argocd-server -n argocd --timeout=300s || true
+
+  # Make argocd-server Service type=LoadBalancer and add port 8443
+  log "Exposing argocd-server as LoadBalancer and adding 8443 port..."
+  kubectl -n argocd patch svc argocd-server -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null
+  kubectl -n argocd patch svc argocd-server --type merge -p '{
+    "spec": {
+      "type": "LoadBalancer",
+      "ports": [
+        {"name":"https-alt","port":8443,"targetPort":8080}
+      ]
+    }
+  }' >/dev/null
+  
+
+  # wait svclb_ready or it will get connection refused
+  wait_svclb_ready kube-system argocd-server 300
+
+  log "Retrieving Argo CD initial admin password..."
+  ARGOCD_ADMIN_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+  ok "Argo CD UI: https://localhost:${ARGOCD_HOST_PORT}   (user: admin, password: ${ARGOCD_ADMIN_PASSWORD})"
+
+  ensure_argocd_repo_secret_ssh
+
+  # apply Application
+  if [[ -f "${ARGOCD_APP_TEMPLATE}" ]]; then
+    need envsubst
+    log "Rendering Application from template via envsubst"
+    log "  REPO_URL = ${REPO_URL}"
+    log "  REVISION = ${REVISION}"
+    log "  APP_PATH = ${APP_PATH}"
+    REPO_URL="${REPO_URL}" REVISION="${REVISION}" APP_PATH="${APP_PATH}" \
+      envsubst < "${ARGOCD_APP_TEMPLATE}" | kubectl apply -f -
+  else
+    warn "Template not found: ${ARGOCD_APP_TEMPLATE}"
+    log  "Falling back to ${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
+    kubectl apply -f "${ARGOCD_MANIFESTS_DIR}/application-dev.yaml"
+  fi
+  ok "Application applied."
+
+  if kubectl -n dev get deploy playground >/dev/null 2>&1; then
+    log "Waiting for Deployment 'playground' Available..."
+    kubectl -n dev wait --for=condition=available deploy/playground --timeout=300s || true
+  else
+    warn "Deployment 'playground' not found yet; will continue and rely on Argo CD sync."
+  fi
+
+  # wait svclb_ready or it will get connection refused
+  wait_svclb_ready kube-system playground-svc 300
+
+  ok "Playground app: http://localhost:${APP_HOST_PORT}"
+}
+
+# =========================
+# Main
+# =========================
+need kubectl
+ensure_docker_ready
+ensure_k3d_cluster_with_ports
+bootstrap_argocd
+ok "All done 🎉  Open: https://localhost:${ARGOCD_HOST_PORT} and http://localhost:${APP_HOST_PORT}"

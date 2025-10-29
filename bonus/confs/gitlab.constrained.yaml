@@ -1,0 +1,83 @@
+# confs/gitlab.constrained.yaml
+# GitLab Helm Chart configuration for constrained environments
+# Fully disable cert-manager and issuer (no TLS for local PoC)
+certmanager-issuer:
+  enabled: false
+installCertmanager: false
+
+global:
+  edition: ce
+  hosts:
+    https: false
+  tls:
+    enabled: false
+  ingress:
+    configureCertmanager: false
+    class: traefik
+  appConfig:
+    # Turn off IO/space heavy features
+    lfs:             { enabled: false }
+    artifacts:       { enabled: false }
+    packages:        { enabled: false }
+    dependencyProxy: { enabled: false }
+    uploads:         { storage: local }
+    pages:           { enabled: false }
+
+nginx-ingress:
+  enabled: false
+
+gitlab:
+  kas: { enabled: false }
+
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+    ingress: { enabled: false }
+    service: { type: ClusterIP }
+    hpa: { enabled: false }
+    # Give Puma enough warmup time; avoid readiness flapping
+    readinessProbe:
+      initialDelaySeconds: 180
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+    resources:
+      requests: { cpu: "100m", memory: "768Mi" }
+      limits:   { cpu: "800m", memory: "2048Mi" }
+
+  gitlab-shell:
+    service: { type: ClusterIP }
+    hpa: { enabled: false }
+    resources:
+      requests: { cpu: "20m", memory: "64Mi" }
+      limits:   { cpu: "200m", memory: "128Mi" }
+
+  sidekiq:
+    concurrency: 1
+    hpa: { enabled: false }
+    resources:
+      requests: { cpu: "50m",  memory: "512Mi" }
+      limits:   { cpu: "300m", memory: "1024Mi" }
+
+  gitaly:
+    resources:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits:   { cpu: "600m", memory: "384Mi" }
+
+gitlab-runner:
+  install: false
+
+registry:   { enabled: false }
+prometheus: { install: false }
+grafana:    { enabled: false }
+
+postgresql:
+  resources:
+    requests: { cpu: "100m", memory: "512Mi" }
+    limits:   { cpu: "500m", memory: "1024Mi" }
+
+redis:
+  master:
+    resources:
+      requests: { cpu: "20m", memory: "128Mi" }
+      limits:   { cpu: "200m", memory: "512Mi" }
