@@ -19,9 +19,15 @@ ARGOCD_HOST_PORT="${ARGOCD_HOST_PORT:-8080}"   # maps to cluster LB :8443
 APP_HOST_PORT="${APP_HOST_PORT:-8888}"         # maps to cluster LB :8888
 ARGOCD_MANIFESTS_DIR="${ARGOCD_MANIFESTS_DIR:-manifests/argocd}"
 
+SSH_PRIVATE_KEY_PATH="${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/gitlab_k3d}"
+GITLAB_SSH_HOST="${GITLAB_SSH_HOST:-gitlab-gitlab-shell.gitlab.svc}"
+GITLAB_SSH_PORT="${GITLAB_SSH_PORT:-22}"
+
 ARGOCD_APP_TEMPLATE="${ARGOCD_APP_TEMPLATE:-manifests/argocd/application-dev.tmpl.yaml}"
-REPO_URL="${REPO_URL:-http://gitlab-webservice-default.gitlab.svc:8181/root/my-repo.git}"
-REVISION="${REVISION:-main}"
+REPO_URL="${REPO_URL:-ssh://git@gitlab-gitlab-shell.gitlab.svc/$USER/Inception-of-Things.git}"
+
+# TODO: Need to change the branch name to main later
+REVISION="${REVISION:-lea/bonus}"
 APP_PATH="${APP_PATH:-manifests/dev}"
 
 # =========================
@@ -74,6 +80,57 @@ ensure_k3d_cluster_with_ports() {
   ok "k3d cluster created."
 }
 
+ensure_argocd_repo_secret_ssh() {
+  [[ -f "$SSH_PRIVATE_KEY_PATH" ]] || die "SSH private key not found: $SSH_PRIVATE_KEY_PATH"
+
+  if ! ssh-keygen -y -P "" -f "$SSH_PRIVATE_KEY_PATH" >/dev/null 2>&1; then
+    die "SSH private key appears to be passphrase-protected. Please use a key without passphrase for Argo CD."
+  fi
+
+  wait_svc_endpoints gitlab gitlab-gitlab-shell 300
+
+  local KH_RAW="/tmp/kh.raw" KH="/tmp/known_hosts"
+  local host="$GITLAB_SSH_HOST" port="$GITLAB_SSH_PORT"
+  local pod="keyscan-tmp"
+  kubectl -n argocd run "$pod" --image=alpine:3.20 --restart=Never --command -- \
+    sh -lc "apk add --no-cache openssh-client >/dev/null; ssh-keyscan -t rsa,ecdsa,ed25519 -p $port $host"
+  for i in $(seq 1 60); do
+    if kubectl -n argocd logs "$pod" >/dev/null 2>&1; then
+      kubectl -n argocd logs "$pod" > "$KH_RAW" || true
+      break
+    fi
+    sleep 1
+  done
+  kubectl -n argocd delete pod "$pod" --ignore-not-found >/dev/null
+  [[ -s "$KH_RAW" ]] || die "failed to fetch SSH host keys from in-cluster for $host:$port"
+
+  awk -v h="$host" -v p="$port" '
+  $1==h { print; printf("[%s]:%s %s %s\n", h, p, $2, $3); next }1
+  ' "$KH_RAW" > "$KH"
+
+  local CRED_URL="ssh://git@${host}"
+
+  log "Applying Argo CD repo-creds (SSH) for ${CRED_URL}"
+  kubectl -n argocd create secret generic gitlab-ssh-creds \
+    --from-literal=url="$CRED_URL" \
+    --from-file=sshPrivateKey="$SSH_PRIVATE_KEY_PATH" \
+    --from-file=sshKnownHosts="$KH" \
+    --dry-run=client -o yaml \
+  | kubectl label --local -f - argocd.argoproj.io/secret-type=repo-creds -o yaml --overwrite \
+  | kubectl apply -n argocd -f -
+
+  ok "Repo-creds Secret ready: gitlab-ssh-creds"
+
+  log "Applying Argo CD ssh-known-hosts ConfigMap for ${host}:${port}"
+  kubectl -n argocd create configmap argocd-ssh-known-hosts-cm \
+    --from-file=ssh_known_hosts="$KH" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  log "Restarting argocd-repo-server to pick up new known_hosts..."
+  kubectl -n argocd rollout restart deploy/argocd-repo-server
+  ok "SSH known_hosts ConfigMap ready: argocd-ssh-known-hosts-cm"
+}
+
 # =========================
 # Waiters (ServiceLB: svclb-*)
 # =========================
@@ -95,6 +152,40 @@ wait_svclb_ready() {
     sleep 3
   done
   die "ServiceLB helper for '${svc}' not ready within ${timeout}s"
+}
+
+wait_svc_endpoints() {
+  local ns="$1" svc="$2" timeout="${3:-300}"
+  log "Waiting for service '${ns}/${svc}' endpoints (timeout ${timeout}s)..."
+  local end=$((SECONDS+timeout))
+  while (( SECONDS <= end )); do
+    if kubectl -n "$ns" get svc "$svc" >/dev/null 2>&1; then
+      local eps
+      eps="$(kubectl -n "$ns" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
+      if [[ -n "$eps" ]]; then
+        ok "Service '${ns}/${svc}' has endpoints: ${eps}"
+        return 0
+      fi
+    fi
+    sleep 3
+  done
+  die "Service '${ns}/${svc}' not ready (no endpoints)."
+}
+
+gen_known_hosts_in_cluster() {
+  local host="$1" port="$2" out="$3"
+  local pod="keyscan-tmp"
+  kubectl -n argocd run "$pod" --image=alpine:3.20 --restart=Never --command -- \
+    sh -lc "apk add --no-cache openssh-client >/dev/null; ssh-keyscan -p $port $host"
+  for i in $(seq 1 60); do
+    if kubectl -n argocd logs "$pod" >/dev/null 2>&1; then
+      kubectl -n argocd logs "$pod" > "$out" || true
+      break
+    fi
+    sleep 1
+  done
+  kubectl -n argocd delete pod "$pod" --ignore-not-found >/dev/null
+  [[ -s "$out" ]] || die "failed to fetch known_hosts from in-cluster for $host:$port"
 }
 
 # =========================
@@ -131,6 +222,8 @@ bootstrap_argocd() {
   log "Retrieving Argo CD initial admin password..."
   ARGOCD_ADMIN_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
   ok "Argo CD UI: https://localhost:${ARGOCD_HOST_PORT}   (user: admin, password: ${ARGOCD_ADMIN_PASSWORD})"
+
+  ensure_argocd_repo_secret_ssh
 
   # apply Application
   if [[ -f "${ARGOCD_APP_TEMPLATE}" ]]; then
